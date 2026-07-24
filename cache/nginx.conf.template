@@ -1,4 +1,5 @@
 # Railway services can have a low process/thread limit. Keep Nginx lightweight.
+user www-data;
 worker_processes 1;
 worker_rlimit_nofile 4096;
 events { worker_connections 1024; }
@@ -9,41 +10,36 @@ http {
     sendfile on;
     # Do not use aio threads on small Railway containers; it can exhaust the PID/thread limit.
     tcp_nopush on;
-    log_format json_access escape=json '{"timestamp":"$time_iso8601","component":"router","type":"access","method":"$request_method","path":"$uri","status":$status,"request_time":$request_time,"upstream_time":"$upstream_response_time","upstream_addr":"$upstream_addr","bytes_sent":$bytes_sent,"client_ip":"$remote_addr"}';
-    access_log /dev/stdout json_access;
+    open_file_cache max=2000 inactive=5m;
+    open_file_cache_valid 2m;
+    open_file_cache_min_uses 2;
+    open_file_cache_errors on;
+    log_format json_cache escape=json '{"timestamp":"$time_iso8601","component":"cache","type":"access","method":"$request_method","path":"$uri","status":$status,"cache_status":"$upstream_cache_status","request_time":$request_time,"upstream_time":"$upstream_response_time","bytes_sent":$bytes_sent,"client_ip":"$remote_addr"}';
+    access_log /dev/stdout json_cache;
     error_log /dev/stderr warn;
-    limit_req_zone $binary_remote_addr zone=edge:10m rate=100r/s;
-    include /etc/nginx/conf.d/upstream.conf;
+    # Never cache requests carrying cookies or authorization credentials.
+    map $http_authorization $skip_private_auth {
+        ""      0;
+        default 1;
+    }
+    map $http_cookie $skip_private_cookie {
+        ""      0;
+        default 1;
+    }
+    proxy_cache_path /var/cache/hls levels=1:2 keys_zone=hls_cache:32m max_size=${CACHE_MAX_SIZE} inactive=60s use_temp_path=off;
+    gzip on;
+    gzip_types application/vnd.apple.mpegurl audio/mpegurl text/vtt application/x-mpegURL;
+    gzip_min_length 256;
     server {
         listen 8080;
         server_name _;
         add_header X-Content-Type-Options nosniff always;
         add_header X-Frame-Options DENY always;
-        add_header Referrer-Policy no-referrer always;
         if ($request_method !~ ^(GET|HEAD)$) { return 405; }
-        location ~ ^/(health|ready|metrics)(/|$) {
-            proxy_pass http://127.0.0.1:9090;
-            proxy_set_header Host $host;
-        }
-        location / {
-            limit_req zone=edge burst=50 nodelay;
-            proxy_pass http://cache_pool;
-            proxy_http_version 1.1;
-            proxy_set_header Connection "";
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto https;
-            proxy_set_header Accept-Encoding "";
-            sub_filter_once off;
-            sub_filter_types application/vnd.apple.mpegurl audio/mpegurl application/x-mpegURL text/plain;
-            sub_filter "http://${ORIGIN_DOMAIN}" "https://${EDGE_DOMAIN}";
-            sub_filter "https://${ORIGIN_DOMAIN}" "https://${EDGE_DOMAIN}";
-            proxy_connect_timeout 10s;
-            proxy_read_timeout 30s;
-            proxy_send_timeout 30s;
-            proxy_next_upstream error timeout http_502 http_503 http_504;
-            proxy_next_upstream_tries 2;
-        }
+        location = /health { default_type application/json; return 200 '{"status":"ok"}'; }
+        location ~* \.m3u8$ { include /etc/nginx/conf.d/cache-proxy.inc; proxy_cache_valid 200 2s; add_header Cache-Control "public, max-age=2" always; }
+        location ~* \.(ts|m4s|mp4|aac)$ { include /etc/nginx/conf.d/cache-proxy.inc; proxy_cache_valid 200 60s; add_header Cache-Control "public, max-age=60" always; }
+        location ~* \.vtt$ { include /etc/nginx/conf.d/cache-proxy.inc; proxy_cache_valid 200 60s; }
+        location / { include /etc/nginx/conf.d/cache-proxy.inc; proxy_cache_valid 200 60s; add_header Cache-Control "public, max-age=60" always; }
     }
 }
