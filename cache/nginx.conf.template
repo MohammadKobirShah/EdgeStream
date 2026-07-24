@@ -26,7 +26,7 @@ http {
         ""      0;
         default 1;
     }
-    proxy_cache_path /var/cache/hls levels=1:2 keys_zone=hls_cache:32m max_size=${CACHE_MAX_SIZE} inactive=60s use_temp_path=off;
+    proxy_cache_path /var/cache/hls levels=1:2 keys_zone=hls_cache:32m ${CACHE_MAX_DIRECTIVE} inactive=60s use_temp_path=off;
     gzip on;
     gzip_types application/vnd.apple.mpegurl audio/mpegurl text/vtt application/x-mpegURL;
     gzip_min_length 256;
@@ -37,9 +37,11 @@ http {
         add_header X-Frame-Options DENY always;
         if ($request_method !~ ^(GET|HEAD)$) { return 405; }
         location = /health { default_type application/json; return 200 '{"status":"ok"}'; }
-        location ~* \.m3u8$ { include /etc/nginx/conf.d/cache-proxy.inc; proxy_cache_valid 200 2s; add_header Cache-Control "public, max-age=2" always; }
-        location ~* \.(ts|m4s|mp4|aac)$ { include /etc/nginx/conf.d/cache-proxy.inc; proxy_cache_valid 200 60s; add_header Cache-Control "public, max-age=60" always; }
-        location ~* \.vtt$ { include /etc/nginx/conf.d/cache-proxy.inc; proxy_cache_valid 200 60s; }
-        location / { include /etc/nginx/conf.d/cache-proxy.inc; proxy_cache_valid 200 60s; add_header Cache-Control "public, max-age=60" always; }
+        # The public root serves the exact manifest configured by ORIGIN_M3U8_URL.
+        location = / { include /etc/nginx/conf.d/manifest-origin.inc; proxy_cache_valid 200 2s; add_header Cache-Control "public, max-age=2" always; }
+        location ~* \.m3u8$ { include /etc/nginx/conf.d/cache-origin.inc; proxy_cache_valid 200 2s; add_header Cache-Control "public, max-age=2" always; }
+        location ~* \.(ts|m4s|mp4|aac)$ { include /etc/nginx/conf.d/cache-origin.inc; proxy_cache_valid 200 60s; add_header Cache-Control "public, max-age=60" always; }
+        location ~* \.vtt$ { include /etc/nginx/conf.d/cache-origin.inc; proxy_cache_valid 200 60s; }
+        location / { include /etc/nginx/conf.d/cache-origin.inc; proxy_cache_valid 200 60s; add_header Cache-Control "public, max-age=60" always; }
     }
 }
