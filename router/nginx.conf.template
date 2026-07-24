@@ -1,0 +1,48 @@
+worker_processes auto;
+worker_rlimit_nofile 8192;
+events { worker_connections 2048; }
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    server_tokens off;
+    sendfile on;
+    aio threads;
+    tcp_nopush on;
+    log_format json_access escape=json '{"timestamp":"$time_iso8601","component":"router","type":"access","method":"$request_method","path":"$uri","status":$status,"request_time":$request_time,"upstream_time":"$upstream_response_time","upstream_addr":"$upstream_addr","bytes_sent":$bytes_sent,"client_ip":"$remote_addr"}';
+    access_log /dev/stdout json_access;
+    error_log /dev/stderr warn;
+    limit_req_zone $binary_remote_addr zone=edge:10m rate=100r/s;
+    include /etc/nginx/conf.d/upstream.conf;
+    server {
+        listen 8080;
+        server_name _;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options DENY always;
+        add_header Referrer-Policy no-referrer always;
+        if ($request_method !~ ^(GET|HEAD)$) { return 405; }
+        location ~ ^/(health|ready|metrics)(/|$) {
+            proxy_pass http://127.0.0.1:9090;
+            proxy_set_header Host $host;
+        }
+        location / {
+            limit_req zone=edge burst=50 nodelay;
+            proxy_pass http://cache_pool;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header Accept-Encoding "";
+            sub_filter_once off;
+            sub_filter_types application/vnd.apple.mpegurl audio/mpegurl application/x-mpegURL text/plain;
+            sub_filter "http://${ORIGIN_DOMAIN}" "https://${EDGE_DOMAIN}";
+            sub_filter "https://${ORIGIN_DOMAIN}" "https://${EDGE_DOMAIN}";
+            proxy_connect_timeout 10s;
+            proxy_read_timeout 30s;
+            proxy_send_timeout 30s;
+            proxy_next_upstream error timeout http_502 http_503 http_504;
+            proxy_next_upstream_tries 2;
+        }
+    }
+}
