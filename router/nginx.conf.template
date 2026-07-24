@@ -1,17 +1,24 @@
-worker_processes auto;
-worker_rlimit_nofile 8192;
-events { worker_connections 2048; }
+# Railway services can have a low process/thread limit. Keep Nginx lightweight.
+worker_processes 1;
+worker_rlimit_nofile 4096;
+events { worker_connections 1024; }
 http {
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
     server_tokens off;
     sendfile on;
-    aio threads;
+    # Do not use aio threads on small Railway containers; it can exhaust the PID/thread limit.
     tcp_nopush on;
-    log_format json_access escape=json '{"timestamp":"$time_iso8601","component":"router","type":"access","method":"$request_method","path":"$uri","status":$status,"request_time":$request_time,"upstream_time":"$upstream_response_time","upstream_addr":"$upstream_addr","bytes_sent":$bytes_sent,"client_ip":"$remote_addr"}';
+    log_format json_access escape=json '{"timestamp":"$time_iso8601","component":"router","type":"access","method":"$request_method","path":"$uri","status":$status,"request_time":$request_time,"upstream_time":"$upstream_response_time","upstream_addr":"$upstream_addr","bytes_sent":$bytes_sent,"client_ip":"$edge_client_ip"}';
     access_log /dev/stdout json_access;
     error_log /dev/stderr warn;
-    limit_req_zone $binary_remote_addr zone=edge:10m rate=100r/s;
+    # Cloudflare Tunnel hides the viewer IP in $remote_addr. Prefer the
+    # Cloudflare client IP for rate limiting, with a direct-access fallback.
+    map $http_cf_connecting_ip $edge_client_ip {
+        ""      $remote_addr;
+        default $http_cf_connecting_ip;
+    }
+    limit_req_zone $edge_client_ip zone=edge:10m rate=100r/s;
     include /etc/nginx/conf.d/upstream.conf;
     server {
         listen 8080;
