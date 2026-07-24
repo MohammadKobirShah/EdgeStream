@@ -51,7 +51,8 @@ edgestream/
 | Variable | Required | Example |
 |---|---:|---|
 | `ORIGIN_M3U8_URL` | Yes | `https://origin.example.com/live/index.m3u8` |
-| `CACHE_MAX_SIZE` | No | `500m` |
+| `CACHE_MAX_SIZE` | No | `500m` or `unlimited` | `unlimited` can exhaust the container filesystem; numeric caps are recommended. |
+| `ORIGIN_TLS_VERIFY` | No | `on` | Set `off` only for a trusted origin with a certificate problem. |
 
 ### Cloudflared
 
@@ -112,6 +113,7 @@ Cache-A and Cache-B variables:
 ```env
 ORIGIN_M3U8_URL=https://origin.example.com/live/sony/index.m3u8
 CACHE_MAX_SIZE=500m
+ORIGIN_TLS_VERIFY=on
 ```
 
 Cloudflared variables:
